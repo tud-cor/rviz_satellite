@@ -35,6 +35,7 @@ limitations under the License. */
 #include "rviz/properties/float_property.h"
 #include "rviz/properties/int_property.h"
 #include "rviz/properties/property.h"
+#include "rviz/properties/tf_frame_property.h"
 #include "rviz/properties/quaternion_property.h"
 #include "rviz/properties/ros_topic_property.h"
 #include "rviz/properties/vector_property.h"
@@ -51,6 +52,10 @@ AerialMapDisplay::AerialMapDisplay() : Display(), dirty_(false), received_msg_(f
   topic_property_ =
       new RosTopicProperty("Topic", "", QString::fromStdString(ros::message_traits::datatype<sensor_msgs::NavSatFix>()),
                            "nav_msgs::Odometry topic to subscribe to.", this, SLOT(updateTopic()));
+
+  frame_property_ = new TfFrameProperty("Tile frame", "utm",
+                                        "Ideally utm. Selectable frame to relate to the tile pose. Avoid float precision issues by selecting something close by the car instead of utm.",
+                                        this, nullptr, false, SLOT(updateFrame()), this);
 
   alpha_property_ =
       new FloatProperty("Alpha", 0.7, "Amount of transparency to apply to the map.", this, SLOT(updateAlpha()));
@@ -101,6 +106,7 @@ AerialMapDisplay::~AerialMapDisplay()
 
 void AerialMapDisplay::onInitialize()
 {
+  frame_property_->setFrameManager(context_->getFrameManager());
 }
 
 void AerialMapDisplay::onEnable()
@@ -150,6 +156,12 @@ void AerialMapDisplay::updateAlpha()
   alpha_ = alpha_property_->getFloat();
   dirty_ = true;
   ROS_INFO("Changing alpha to %f", alpha_);
+}
+
+void AerialMapDisplay::updateFrame()
+{
+  ROS_INFO_STREAM("Changing tile frame to " << frame_property_->getFrameStd());
+  transformAerialMap();
 }
 
 void AerialMapDisplay::updateDrawUnder()
@@ -471,7 +483,7 @@ void AerialMapDisplay::transformAerialMap()
   }
 
   // the world's frame
-  std::string const utm = "utm"; // make this a configurable setting in rviz
+  std::string const tile_frame = frame_property_->getFrameStd();
 
   // tile ID (integer x/y/zoom) corresponding to the downloaded tile / navsat message
   auto const tile = fromWGSCoordinate<int>({ ref_fix_.latitude, ref_fix_.longitude }, zoom_);
@@ -487,30 +499,35 @@ void AerialMapDisplay::transformAerialMap()
   RobotLocalization::NavsatConversions::LLtoUTM(latitude, longitude, northing, easting, utm_zone);
 
   // Origin of the tile in utm coordinates
-  geometry_msgs::Pose origin;
-  origin.position.x = easting;
-  origin.position.y = northing;
-  origin.position.z = 0;
-  origin.orientation.x = 0;
-  origin.orientation.y = 0;
-  origin.orientation.z = 0;
-  origin.orientation.w = 1;
+  geometry_msgs::PoseStamped tile_in_utm;
+  tile_in_utm.header.frame_id = "utm";
+  tile_in_utm.pose.position.x = easting;
+  tile_in_utm.pose.position.y = northing;
+  tile_in_utm.pose.position.z = 0;
+  tile_in_utm.pose.orientation.x = 0;
+  tile_in_utm.pose.orientation.y = 0;
+  tile_in_utm.pose.orientation.z = 0;
+  tile_in_utm.pose.orientation.w = 1;
+
+  // Transform to origin of the tile in 'tile frame' coordinates with double precision to allow a local anchor before using float precision to draw with Ogre
+  geometry_msgs::PoseStamped origin;
+  context_->getTFClient()->transformPose(tile_frame, tile_in_utm, origin);
 
   // Set the position and orientation of the tile
   Ogre::Quaternion orientation;
   Ogre::Vector3 position;
-  if (!context_->getFrameManager()->transform(utm, ros::Time(), origin, position, orientation))
+  if (!context_->getFrameManager()->transform(tile_frame, ros::Time(), origin.pose, position, orientation))
   {
     // display error
     std::string error;
-    if (context_->getFrameManager()->transformHasProblems(utm, ros::Time(), error))
+    if (context_->getFrameManager()->transformHasProblems(tile_frame, ros::Time(), error))
     {
       setStatus(StatusProperty::Error, "Transform", QString::fromStdString(error));
     }
     else
     {
       setStatus(StatusProperty::Error, "Transform",
-                "Could not transform from [" + QString::fromStdString(utm) + "] to Fixed Frame [" + fixed_frame_ +
+                "Could not transform from [" + QString::fromStdString(tile_frame) + "] to Fixed Frame [" + fixed_frame_ +
                     "] for an unknown reason");
     }
     return;
