@@ -511,7 +511,12 @@ void AerialMapDisplay::transformAerialMap()
 
   // Transform to origin of the tile in 'tile frame' coordinates with double precision to allow a local anchor before using float precision to draw with Ogre
   geometry_msgs::PoseStamped origin;
-  context_->getTFClient()->transformPose(tile_frame, tile_in_utm, origin);
+  try {
+    context_->getTFClient()->transformPose(tile_frame, tile_in_utm, origin);
+  } catch (const tf2::TransformException & e) {
+    setStatus(StatusProperty::Error, "Transform", QString::fromStdString(e.what()));
+    return;
+  }
 
   // Set the position and orientation of the tile
   Ogre::Quaternion orientation;
