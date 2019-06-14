@@ -496,7 +496,13 @@ void AerialMapDisplay::transformAerialMap()
   // Tile's origin in UTM coordinates
   double northing, easting;
   std::string utm_zone;
-  RobotLocalization::NavsatConversions::LLtoUTM(latitude, longitude, northing, easting, utm_zone);
+  double utm_meridian_convergence;
+  RobotLocalization::NavsatConversions::LLtoUTM(latitude, longitude, northing, easting, utm_zone, utm_meridian_convergence);
+
+  // Get north orientation of the tile
+  utm_meridian_convergence *= M_PI / 180;
+  tf2::Quaternion utm_meridian_convergence_quat;
+  utm_meridian_convergence_quat.setRPY(0.0, 0.0, utm_meridian_convergence);
 
   // Origin of the tile in utm coordinates
   geometry_msgs::PoseStamped tile_in_utm;
@@ -504,10 +510,10 @@ void AerialMapDisplay::transformAerialMap()
   tile_in_utm.pose.position.x = easting;
   tile_in_utm.pose.position.y = northing;
   tile_in_utm.pose.position.z = 0;
-  tile_in_utm.pose.orientation.x = 0;
-  tile_in_utm.pose.orientation.y = 0;
-  tile_in_utm.pose.orientation.z = 0;
-  tile_in_utm.pose.orientation.w = 1;
+  tile_in_utm.pose.orientation.x = utm_meridian_convergence_quat.getX();
+  tile_in_utm.pose.orientation.y = utm_meridian_convergence_quat.getY();
+  tile_in_utm.pose.orientation.z = utm_meridian_convergence_quat.getZ();
+  tile_in_utm.pose.orientation.w = utm_meridian_convergence_quat.getW();
 
   // Transform to origin of the tile in 'tile frame' coordinates with double precision to allow a local anchor before using float precision to draw with Ogre
   geometry_msgs::PoseStamped origin;
